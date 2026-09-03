@@ -211,6 +211,11 @@ main() {
 				setup_systemd "$@"
 				exit
 				;;
+			--tmpfiles )
+				shift
+				setup_tmpfiles "$@"
+				exit
+				;;
 			--udev )
 				shift
 				setup_udev "$@"
@@ -235,7 +240,7 @@ main() {
 					echo "Example 2: ./panix.sh --revert all"
 					echo "Example 3: ./panix.sh --revert-all"
 					echo ""
-					echo "Modules: all, at, authorized-keys, backdoor-user, bind-shell, cap, create-user, cron, malicious-container, generator, git, initd, ld-preload, lkm, malicious-package, motd, package-manager, pam, passwd-user, password-change, rc-local, rootkit, shell-profile, ssh-key, sudoers, suid, system-binary, systemd, udev, xdg"
+					echo "Modules: all, at, authorized-keys, backdoor-user, bind-shell, cap, create-user, cron, malicious-container, generator, git, initd, ld-preload, lkm, malicious-package, motd, package-manager, pam, passwd-user, password-change, rc-local, rootkit, shell-profile, ssh-key, sudoers, suid, system-binary, systemd, tmpfiles, udev, xdg"
 					echo ""
 					exit 1
 				fi

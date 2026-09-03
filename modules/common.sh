@@ -34,6 +34,7 @@ usage_user() {
 	echo "  --shell-profile        Shell profile persistence"
 	echo "  --ssh-key              SSH key persistence"
 	echo "  --systemd              Systemd service persistence"
+	echo "  --tmpfiles             systemd-tmpfiles.d persistence"
 	echo "  --web-shell            Web shell persistence (PHP/Python)"
 	echo "  --xdg                  XDG autostart persistence"
 	echo "  --revert               Revert most changes made by PANIX' default options"
@@ -79,6 +80,7 @@ usage_root() {
 	echo "  --suid                 SUID persistence"
 	echo "  --system-binary        System binary persistence"
 	echo "  --systemd              Systemd service persistence"
+	echo "  --tmpfiles             systemd-tmpfiles.d persistence"
 	echo "  --udev                 Udev (driver) persistence"
 	echo "  --web-shell            Web shell persistence (PHP/Python)"
 	echo "  --xdg                  XDG autostart persistence"
@@ -126,6 +128,7 @@ revert_all() {
 		revert_suid
 		revert_system_binary
 		revert_systemd
+		revert_tmpfiles
 		revert_udev
 		revert_web_shell
 		revert_xdg
